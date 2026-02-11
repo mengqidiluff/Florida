@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: User <user@example.com>
+Date: Tue, 11 Feb 2026 17:00:00 +0800
+Subject: [PATCH] Hide socket name - remove frida- prefix
+
+---
+ src/linux/frida-helper-backend.vala | 12 ++++++++++--
+ src/linux/frida-helper-process.vala | 11 ++++++++++-
+ src/system.vala                     |  7 ++++---
+ 3 files changed, 24 insertions(+), 6 deletions(-)
+
+diff --git a/src/linux/frida-helper-backend.vala b/src/linux/frida-helper-backend.vala
+index 1234567..abcdefg 100644
+--- a/src/linux/frida-helper-backend.vala
++++ b/src/linux/frida-helper-backend.vala
+@@ -1252,8 +1252,16 @@ namespace Frida {
+ 			return (void *) (remote_module.base_address + offset);
+ 		}
+ 
+ 		private static string make_fallback_address () {
+-			return "/frida-" + Uuid.string_random ();
++			return "/" + make_random_socket_name ();
++		}
++
++		private static string make_random_socket_name () {
++			var builder = new StringBuilder ();
++			var chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
++			for (var i = 0; i != 32; i++)
++				builder.append_c (chars[Random.int_range (0, chars.length)]);
++			return builder.str;
+ 		}
+ 
+ 		private Future<RemoteAgent> establish_connection (LoaderLaunch launch, InjectSpec spec, BootstrapResult bres,
+diff --git a/src/linux/frida-helper-process.vala b/src/linux/frida-helper-process.vala
+index 1234567..abcdefg 100644
+--- a/src/linux/frida-helper-process.vala
++++ b/src/linux/frida-helper-process.vala
+@@ -1,4 +1,13 @@
+ namespace Frida {
++	private static string make_random_socket_name () {
++		var builder = new StringBuilder ();
++		var chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
++		for (var i = 0; i != 32; i++)
++			builder.append_c (chars[Random.int_range (0, chars.length)]);
++		return builder.str;
++	}
++
+ 	public sealed class LinuxHelperProcess : Object, LinuxHelper {
+ 		public TemporaryDirectory tempdir {
+ 			get;
+@@ -321,7 +330,7 @@ namespace Frida {
+ 			TimeoutSource? timeout_source = null;
+ 
+ 			try {
+-				string socket_path = "/frida-" + Uuid.string_random ();
++				string socket_path = "/" + make_random_socket_name ();
+ 				string socket_address = "unix:abstract=" + socket_path;
+ 
+ 				service = new SocketService ();
+diff --git a/src/system.vala b/src/system.vala
+index 1234567..abcdefg 100644
+--- a/src/system.vala
++++ b/src/system.vala
+@@ -238,9 +238,10 @@ namespace Frida {
+ 		}
+ 
+ 		public static string make_name () {
+-			var builder = new StringBuilder ("frida-");
+-			for (var i = 0; i != 16; i++)
+-				builder.append_printf ("%02x", Random.int_range (0, 256));
++			var builder = new StringBuilder ();
++			var chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
++			for (var i = 0; i != 32; i++)
++				builder.append_c (chars[Random.int_range (0, chars.length)]);
+ 			return builder.str;
+ 		}
+ 
+-- 
+2.42.0
