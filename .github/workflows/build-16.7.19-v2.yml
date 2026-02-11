@@ -50,37 +50,118 @@ jobs:
         
         # Clone frida 16.7.19
         git clone --recurse-submodules --branch 16.7.19 https://github.com/frida/frida
-        cd frida/subprojects/frida-core
         
-        # Direct string replacement to hide socket names
         echo "=== Patching socket names ==="
         
-        # Patch 1: frida-helper-backend.vala - replace make_fallback_address function
-        sed -i 's|return "/frida-" + Uuid.string_random ();|var b = new StringBuilder (); var c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; for (var i = 0; i != 32; i++) b.append_c (c[Random.int_range (0, c.length)]); return "/" + b.str;|g' src/linux/frida-helper-backend.vala
+        BACKEND_FILE="frida/subprojects/frida-core/src/linux/frida-helper-backend.vala"
+        PROCESS_FILE="frida/subprojects/frida-core/src/linux/frida-helper-process.vala"
+        SYSTEM_FILE="frida/subprojects/frida-core/src/system.vala"
         
-        # Patch 2: frida-helper-process.vala - replace socket_path
-        sed -i 's|string socket_path = "/frida-" + Uuid.string_random ();|var b = new StringBuilder (); var c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; for (var i = 0; i != 32; i++) b.append_c (c[Random.int_range (0, c.length)]); string socket_path = "/" + b.str;|g' src/linux/frida-helper-process.vala
+        # Show original lines before patching
+        echo "=== Original code ==="
+        echo "--- backend.vala:1254-1256 ---"
+        sed -n '1254,1256p' "$BACKEND_FILE"
+        echo "--- process.vala:323-325 ---"
+        sed -n '323,325p' "$PROCESS_FILE"
+        echo "--- system.vala:240-244 ---"
+        sed -n '240,244p' "$SYSTEM_FILE"
         
-        # Patch 3: system.vala - replace make_name function body
-        sed -i 's|var builder = new StringBuilder ("frida-");|var builder = new StringBuilder (); var chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";|g' src/system.vala
-        sed -i 's|for (var i = 0; i != 16; i++)|for (var i = 0; i != 32; i++)|g' src/system.vala
-        sed -i 's|builder.append_printf ("%02x", Random.int_range (0, 256));|builder.append_c (chars[Random.int_range (0, chars.length)]);|g' src/system.vala
+        # Use Python for reliable patching
+        cat > /tmp/patch_frida.py << 'PYEOF'
+import sys
+
+backend_file = "frida/subprojects/frida-core/src/linux/frida-helper-backend.vala"
+process_file = "frida/subprojects/frida-core/src/linux/frida-helper-process.vala"
+system_file = "frida/subprojects/frida-core/src/system.vala"
+
+# Patch 1: backend
+with open(backend_file, 'r') as f:
+    content = f.read()
+old = 'return "/frida-" + Uuid.string_random ();'
+new = 'var _sb = new StringBuilder (); var _c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; for (var _i = 0; _i != 32; _i++) _sb.append_c (_c[Random.int_range (0, _c.length)]); return "/" + _sb.str;'
+if old in content:
+    content = content.replace(old, new)
+    with open(backend_file, 'w') as f:
+        f.write(content)
+    print("OK: Patched backend")
+else:
+    print("FAIL: backend pattern not found")
+    sys.exit(1)
+
+# Patch 2: process
+with open(process_file, 'r') as f:
+    content = f.read()
+old = 'string socket_path = "/frida-" + Uuid.string_random ();'
+new = 'var _sb = new StringBuilder (); var _c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; for (var _i = 0; _i != 32; _i++) _sb.append_c (_c[Random.int_range (0, _c.length)]); string socket_path = "/" + _sb.str;'
+if old in content:
+    content = content.replace(old, new)
+    with open(process_file, 'w') as f:
+        f.write(content)
+    print("OK: Patched process")
+else:
+    print("FAIL: process pattern not found")
+    sys.exit(1)
+
+# Patch 3: system - use simple single-line replacement
+with open(system_file, 'r') as f:
+    content = f.read()
+# Just replace the key parts
+old1 = 'new StringBuilder ("frida-")'
+new1 = 'new StringBuilder ()'
+old2 = 'for (var i = 0; i != 16; i++)'
+new2 = 'for (var i = 0; i != 32; i++)'
+old3 = 'builder.append_printf ("%02x", Random.int_range (0, 256))'
+new3 = 'builder.append_c ("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"[Random.int_range (0, 62)])'
+
+patched = False
+if old1 in content:
+    content = content.replace(old1, new1)
+    patched = True
+    print("OK: Patched StringBuilder")
+if old2 in content:
+    content = content.replace(old2, new2)
+    print("OK: Patched loop count")
+if old3 in content:
+    content = content.replace(old3, new3)
+    print("OK: Patched append")
+
+if patched:
+    with open(system_file, 'w') as f:
+        f.write(content)
+    print("OK: Patched system")
+else:
+    print("FAIL: system patterns not found")
+    sys.exit(1)
+
+print("All patches applied successfully!")
+PYEOF
+        python3 /tmp/patch_frida.py
         
-        # Verify patches
-        echo "=== Verifying patches ==="
-        grep -n "frida-" src/linux/frida-helper-backend.vala | head -5 || echo "No frida- in backend"
-        grep -n "frida-" src/linux/frida-helper-process.vala | head -5 || echo "No frida- in process"
-        grep -n "frida-" src/system.vala | head -5 || echo "No frida- in system"
+        # Verify patches were applied
+        echo ""
+        echo "=== After patching ==="
+        echo "--- backend.vala:1254-1260 ---"
+        sed -n '1254,1260p' "$BACKEND_FILE"
+        echo "--- process.vala:323-329 ---"
+        sed -n '323,329p' "$PROCESS_FILE"
+        echo "--- system.vala:240-246 ---"
+        sed -n '240,246p' "$SYSTEM_FILE"
         
-        cd ../..
+        # Final verification
+        echo ""
+        echo "=== Final grep check ==="
+        echo -n "backend.vala frida- count: "
+        grep -c '"/frida-"' "$BACKEND_FILE" || echo "0"
+        echo -n "process.vala frida- count: "
+        grep -c '"/frida-"' "$PROCESS_FILE" || echo "0"
+        echo -n "system.vala frida- prefix count: "
+        grep -c 'StringBuilder ("frida-")' "$SYSTEM_FILE" || echo "0"
         
         # Build only arm64
-        cd ..
         mkdir build-android-arm64
         cd build-android-arm64
         ../frida/configure --host=android-arm64
         make
-        cd ..
 
     - name: package and upload
       shell: bash
