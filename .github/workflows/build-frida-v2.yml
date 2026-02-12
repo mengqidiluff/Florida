@@ -52,66 +52,47 @@ jobs:
       run: |
         cd frida
         
-        echo "=== Applying SAME-LENGTH source patches ==="
+        echo "=== Applying SAFE source patches ==="
         
-        # 关键替换 (必须相同长度!)
-        # frida_agent_main (16) -> bkWNs_agent_main (16)
-        # frida-agent (11) -> bkWNs-agent (11)  
-        # frida:rpc (9) -> AdWBfWIcq (9)
-        # frida-server (12) -> bkWNs-server (12)
-        # frida-helper (12) -> bkWNs-helper (12)
+        # 只替换确定是检测点的字符串，避免破坏文件引用
         
-        echo "1. Patching frida_agent_main -> bkWNs_agent_main (16 chars)..."
+        # 1. 核心: frida_agent_main 函数名 (这是导出符号，必须源码级替换)
+        echo "1. Patching frida_agent_main -> bkWNs_agent_main..."
         find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/frida_agent_main/bkWNs_agent_main/g' {} \;
         
-        echo "2. Patching frida-agent -> bkWNs-agent (11 chars)..."
-        # 只替换源码文件，不替换 meson.build (避免文件名引用问题)
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
-          sed -i 's/frida-agent/bkWNs-agent/g' {} \;
-        
-        echo "3. Patching frida:rpc -> AdWBfWIcq (9 chars)..."
+        # 2. RPC 标识符
+        echo "2. Patching frida:rpc -> AdWBfWIcq..."
         find . -type f \( -name "*.vala" -o -name "*.js" -o -name "*.ts" \) -exec \
           sed -i 's/frida:rpc/AdWBfWIcq/g' {} \;
         
-        echo "4. Patching frida-server -> bkWNs-server (12 chars)..."
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
-          sed -i 's/frida-server/bkWNs-server/g' {} \;
-        
-        echo "5. Patching frida-helper -> bkWNs-helper (12 chars)..."
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
-          sed -i 's/frida-helper/bkWNs-helper/g' {} \;
-        
-        echo "6. Patching re.frida.server -> xx.xxxxx.xxxxxx (15 chars)..."
+        # 3. 包标识符 (不是文件名，安全替换)
+        echo "3. Patching package identifiers..."
         find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/re\.frida\.server/xx.xxxxx.xxxxxx/g' {} \;
-        
-        echo "7. Patching re.frida.Helper -> xx.xxxxx.Xxxxxx (15 chars)..."
         find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/re\.frida\.Helper/xx.xxxxx.Xxxxxx/g' {} \;
         
-        echo "8. Patching socket names..."
+        # 4. Socket 名称前缀 (关键检测点)
+        echo "4. Patching socket names..."
         sed -i 's|"/frida-" + Uuid.string_random ()|"/" + Uuid.string_random ()|g' \
           subprojects/frida-core/src/linux/frida-helper-backend.vala || true
         
-        echo "9. Patching thread names..."
+        # 5. 线程名
+        echo "5. Patching thread names..."
         find subprojects/frida-gum -name "*.c" -exec sed -i 's/"gmain"/"xmain"/g' {} \;
         find subprojects/frida-gum -name "*.c" -exec sed -i 's/"gdbus"/"xdbus"/g' {} \;
         find subprojects/frida-core -name "*.vala" -exec sed -i 's/"gum-js-loop"/"xxx-xx-loop"/g' {} \;
         find subprojects/frida-core -name "*.vala" -exec sed -i 's/"pool-spawner"/"pool-xxxxxxx"/g' {} \;
         
-        echo "10. Patching process name..."
+        # 6. 进程名
+        echo "6. Patching process name..."
         sed -i 's/g_set_prgname ("frida")/g_set_prgname ("system")/g' subprojects/frida-gum/gum/gum.c || true
-        
-        echo "11. Patching memfd name..."
-        sed -i 's/frida-/cache-/g' subprojects/frida-core/lib/base/linux.vala || true
         
         echo ""
         echo "=== Verification ==="
         echo "frida_agent_main: $(grep -r 'frida_agent_main' --include='*.c' --include='*.vala' | wc -l)"
         echo "bkWNs_agent_main: $(grep -r 'bkWNs_agent_main' --include='*.c' --include='*.vala' | wc -l)"
-        echo "frida-agent: $(grep -r 'frida-agent' --include='*.c' --include='*.vala' --include='meson.build' | wc -l)"
-        echo "bkWNs-agent: $(grep -r 'bkWNs-agent' --include='*.c' --include='*.vala' --include='meson.build' | wc -l)"
 
     - name: Build frida-server for Android arm64
       run: |
@@ -173,12 +154,9 @@ jobs:
         
         echo "=== Applying SAME patches to frida-python ==="
         
-        # 相同的替换!
+        # 只替换关键符号和 RPC
         find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/frida_agent_main/bkWNs_agent_main/g' {} \;
-        
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
-          sed -i 's/frida-agent/bkWNs-agent/g' {} \;
         
         find . -type f \( -name "*.vala" -o -name "*.js" -o -name "*.ts" \) -exec \
           sed -i 's/frida:rpc/AdWBfWIcq/g' {} \;
