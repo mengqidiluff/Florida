@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Binary patch frida-server to replace detection strings
+Binary patch frida-server to replace detection strings.
+Uses SAME-LENGTH replacements for binary compatibility.
 """
 import sys
 
@@ -12,15 +13,27 @@ def patch_binary(file_path):
     original_size = len(data)
     print(f"File size: {original_size}")
     
+    # SAME-LENGTH replacements (critical for binary patching!)
     replacements = [
-        (b'frida_agent_main', b'fxxxx_agent_main'),
-        (b'frida_agent_container', b'fxxxx_agent_container'),
-        (b'frida_agent_message', b'fxxxx_agent_message'),
-        (b'frida_agent_runner', b'fxxxx_agent_runner'),
+        # Agent main (16 chars each)
+        (b'frida_agent_main', b'bkWNs_agent_main'),
+        # Agent lib (11 chars each)  
+        (b'frida-agent', b'bkWNs-agent'),
+        # RPC (9 chars each)
+        (b'frida:rpc', b'AdWBfWIcq'),
+        # Server/Helper (12 chars each)
+        (b'frida-server', b'bkWNs-server'),
+        (b'frida-helper', b'bkWNs-helper'),
+        # Package identifiers (15 chars each)
         (b're.frida.server', b'xx.xxxxx.xxxxxx'),
         (b're.frida.Helper', b'xx.xxxxx.Xxxxxx'),
-        (b'FridaScriptEngine', b'XxxxxScriptEngine'),
-        (b'GumScriptScheduler', b'XxxScriptScheduler'),
+        # Socket name (7 chars each)
+        (b'/frida-', b'/bkWNs-'),
+        # Thread names
+        (b'gum-js-loop', b'xxx-xx-loop'),
+        (b'pool-spawner', b'pool-xxxxxxx'),
+        (b'gmain', b'xmain'),
+        (b'gdbus', b'xdbus'),
     ]
     
     for old, new in replacements:
