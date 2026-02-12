@@ -26,34 +26,22 @@ def patch_file(filepath, old, new, description):
 def main():
     log("Starting Florida patches for Frida 16.7.19")
     
-    # ===== Patch 1: string_frida_rpc (lib/base/rpc.vala) =====
-    log("Patch 1: string_frida_rpc")
+    # ===== Patch 1: string_frida_rpc =====
+    # 在源码级别替换 frida:rpc 为 AdWBfWIcq (和 v2 服务器一致)
+    # 这样编译出来的二进制文件会使用新的 RPC 标识符
+    log("Patch 1: Replace frida:rpc with AdWBfWIcq in source")
+    
     filepath = "lib/base/rpc.vala"
-    with open(filepath, "r") as f:
-        content = f.read()
+    if os.path.exists(filepath):
+        with open(filepath, "r") as f:
+            content = f.read()
+        old_count = content.count('"frida:rpc"')
+        content = content.replace('"frida:rpc"', '"AdWBfWIcq"')
+        new_count = content.count('"AdWBfWIcq"')
+        with open(filepath, "w") as f:
+            f.write(content)
+        log(f"  Patched {filepath}: {old_count} -> {new_count}")
     
-    # Add getRpcStr method after the constructor
-    old_constructor = 'Object (peer: peer);\n\t\t}'
-    new_constructor = '''Object (peer: peer);
-		}
-
-		public string getRpcStr(bool quote){
-			string result = (string) GLib.Base64.decode((string) GLib.Base64.decode("Wm5KcFpHRTZjbkJq"));
-			if(quote){
-				return "\\"" + result + "\\"";
-			}else{
-				return result;
-			}
-		}'''
-    content = content.replace(old_constructor, new_constructor)
-    
-    # Replace frida:rpc usages
-    content = content.replace('.add_string_value ("frida:rpc")', '.add_string_value (getRpcStr(false))')
-    content = content.replace('json.index_of ("\\"frida:rpc\\"")', 'json.index_of (getRpcStr(true))')
-    content = content.replace('type != "frida:rpc"', 'type != getRpcStr(false)')
-    
-    with open(filepath, "w") as f:
-        f.write(content)
     log("  Patch 1 applied")
 
     # ===== Patch 2: frida_agent_so (src/linux/linux-host-session.vala) =====
@@ -223,6 +211,10 @@ if __name__ == "__main__":
     random_name = "".join(random.sample(random_charset, 5))
     log_color(f"[*] Patch `gdbus` to `{random_name}`")
     os.system(f"sed -b -i s/gdbus/{random_name}/g {input_file}")
+
+    # frida:rpc -> AdWBfWIcq (和 v2 服务器保持一致)
+    log_color(f"[*] Patch `frida:rpc` to `AdWBfWIcq`")
+    os.system(f"sed -b -i 's/frida:rpc/AdWBfWIcq/g' {input_file}")
 
     log_color(f"[*] Patch Finish")
 '''
