@@ -25,8 +25,7 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential ninja-build gcc-multilib g++-multilib \
-          lib32stdc++-11-dev flex bison xz-utils pkg-config \
-          mingw-w64 mingw-w64-tools
+          lib32stdc++-11-dev flex bison xz-utils pkg-config
         pip install meson ninja wheel setuptools
 
     - name: Clone frida 16.7.19
@@ -35,13 +34,12 @@ jobs:
 
     - name: Patch frida:rpc to AdWBfWIcq in source
       run: |
-        # 固定的 RPC 字符串
         OLD_RPC="frida:rpc"
         NEW_RPC="AdWBfWIcq"
         
         echo "Patching $OLD_RPC -> $NEW_RPC"
         
-        # 1. Patch rpc.vala in frida-core
+        # Patch rpc.vala in frida-core
         RPC_VALA="frida/subprojects/frida-core/lib/base/rpc.vala"
         if [ -f "$RPC_VALA" ]; then
           sed -i "s/\"$OLD_RPC\"/\"$NEW_RPC\"/g" "$RPC_VALA"
@@ -49,14 +47,14 @@ jobs:
           grep -c "$NEW_RPC" "$RPC_VALA" || true
         fi
         
-        # 2. Patch all JS files
-        find frida/subprojects -name "*.js" -exec grep -l "$OLD_RPC" {} \; | while read f; do
+        # Patch all JS files
+        find frida/subprojects -name "*.js" -exec grep -l "$OLD_RPC" {} \; 2>/dev/null | while read f; do
           sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
           echo "Patched $f"
         done
         
-        # 3. Patch all TS files
-        find frida/subprojects -name "*.ts" -exec grep -l "$OLD_RPC" {} \; | while read f; do
+        # Patch all TS files
+        find frida/subprojects -name "*.ts" -exec grep -l "$OLD_RPC" {} \; 2>/dev/null | while read f; do
           sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
           echo "Patched $f"
         done
@@ -85,7 +83,7 @@ jobs:
         fi
         
         # Patch JS/TS files
-        find frida-python/subprojects -name "*.js" -o -name "*.ts" | xargs grep -l "$OLD_RPC" 2>/dev/null | while read f; do
+        find frida-python/subprojects -name "*.js" -o -name "*.ts" 2>/dev/null | xargs grep -l "$OLD_RPC" 2>/dev/null | while read f; do
           sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
           echo "Patched $f"
         done
@@ -100,7 +98,6 @@ jobs:
     - name: List built files
       run: |
         ls -la frida-python/dist/ || true
-        ls -la frida/ || true
 
     - name: Upload Linux wheel
       uses: actions/upload-artifact@v4
@@ -166,7 +163,7 @@ jobs:
         echo "Patched rpc.vala: $(grep -c "$NEW_RPC" "$RPC_VALA") occurrences"
         
         # Patch all JS/TS files
-        find frida/subprojects -type f \( -name "*.js" -o -name "*.ts" \) | while read f; do
+        find frida/subprojects -type f \( -name "*.js" -o -name "*.ts" \) 2>/dev/null | while read f; do
           if grep -q "$OLD_RPC" "$f" 2>/dev/null; then
             sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
             echo "Patched: $f"
@@ -198,68 +195,7 @@ jobs:
 
     - name: Post-process frida-server binary
       run: |
-        SERVER="build-android-arm64/subprojects/frida-core/server/frida-server"
-        
-        if [ -f "$SERVER" ]; then
-          echo "=== Before post-processing ==="
-          echo "frida:rpc: $(grep -c 'frida:rpc' "$SERVER" || echo 0)"
-          echo "AdWBfWIcq: $(grep -c 'AdWBfWIcq' "$SERVER" || echo 0)"
-          
-          # Additional binary patches for thread names
-          python3 << 'EOF'
-import random
-import string
-import sys
-
-def random_string(length):
-    return ''.join(random.choices(string.ascii_letters, k=length))
-
-server_path = "build-android-arm64/subprojects/frida-core/server/frida-server"
-
-with open(server_path, 'rb') as f:
-    data = f.read()
-
-print(f"Size: {len(data)}")
-print(f"frida:rpc before: {data.count(b'frida:rpc')}")
-
-# Patch remaining frida:rpc
-data = data.replace(b'frida:rpc', b'AdWBfWIcq')
-
-# Patch thread names
-gmain_new = random_string(5).encode()
-gdbus_new = random_string(5).encode()
-data = data.replace(b'gmain', gmain_new)
-data = data.replace(b'gdbus', gdbus_new)
-
-# Patch gum-js-loop
-gum_new = random_string(11).encode()
-data = data.replace(b'gum-js-loop', gum_new)
-
-# Patch pool-spawner
-pool_new = random_string(12).encode()
-data = data.replace(b'pool-spawner', pool_new)
-
-# Patch frida-agent
-agent_new = random_string(11).encode()
-data = data.replace(b'frida-agent', agent_new)
-
-# Patch frida-server
-server_new = random_string(12).encode()
-data = data.replace(b'frida-server', server_new)
-
-# Patch /frida- paths
-path_new = '/' + random_string(6)
-data = data.replace(b'/frida-', path_new.encode())
-
-print(f"frida:rpc after: {data.count(b'frida:rpc')}")
-print(f"AdWBfWIcq after: {data.count(b'AdWBfWIcq')}")
-
-with open(server_path, 'wb') as f:
-    f.write(data)
-
-print("Post-processing complete!")
-EOF
-        fi
+        python3 $GITHUB_WORKSPACE/post_process_server.py build-android-arm64/subprojects/frida-core/server/frida-server
 
     - name: Compress and upload
       run: |
