@@ -54,45 +54,38 @@ jobs:
         
         echo "=== Applying SAFE source patches ==="
         
-        # 只替换确定是检测点的字符串，避免破坏文件引用
+        # 不修改 frida_agent_main - 会导致链接错误！
+        # 改用编译后的 ELF 符号表修改
         
-        # 1. 核心: frida_agent_main 函数名 (这是导出符号，必须源码级替换)
-        echo "1. Patching frida_agent_main -> bkWNs_agent_main..."
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
-          sed -i 's/frida_agent_main/bkWNs_agent_main/g' {} \;
-        
-        # 2. RPC 标识符
-        echo "2. Patching frida:rpc -> AdWBfWIcq..."
+        # 1. RPC 标识符 (安全)
+        echo "1. Patching frida:rpc -> AdWBfWIcq..."
         find . -type f \( -name "*.vala" -o -name "*.js" -o -name "*.ts" \) -exec \
           sed -i 's/frida:rpc/AdWBfWIcq/g' {} \;
         
-        # 3. 包标识符 (不是文件名，安全替换)
-        echo "3. Patching package identifiers..."
+        # 2. 包标识符 (安全)
+        echo "2. Patching package identifiers..."
         find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/re\.frida\.server/xx.xxxxx.xxxxxx/g' {} \;
         find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/re\.frida\.Helper/xx.xxxxx.Xxxxxx/g' {} \;
         
-        # 4. Socket 名称前缀 (关键检测点)
-        echo "4. Patching socket names..."
+        # 3. Socket 名称前缀 (关键!)
+        echo "3. Patching socket names..."
         sed -i 's|"/frida-" + Uuid.string_random ()|"/" + Uuid.string_random ()|g' \
           subprojects/frida-core/src/linux/frida-helper-backend.vala || true
         
-        # 5. 线程名
-        echo "5. Patching thread names..."
+        # 4. 线程名
+        echo "4. Patching thread names..."
         find subprojects/frida-gum -name "*.c" -exec sed -i 's/"gmain"/"xmain"/g' {} \;
         find subprojects/frida-gum -name "*.c" -exec sed -i 's/"gdbus"/"xdbus"/g' {} \;
         find subprojects/frida-core -name "*.vala" -exec sed -i 's/"gum-js-loop"/"xxx-xx-loop"/g' {} \;
         find subprojects/frida-core -name "*.vala" -exec sed -i 's/"pool-spawner"/"pool-xxxxxxx"/g' {} \;
         
-        # 6. 进程名
-        echo "6. Patching process name..."
+        # 5. 进程名
+        echo "5. Patching process name..."
         sed -i 's/g_set_prgname ("frida")/g_set_prgname ("system")/g' subprojects/frida-gum/gum/gum.c || true
         
-        echo ""
-        echo "=== Verification ==="
-        echo "frida_agent_main: $(grep -r 'frida_agent_main' --include='*.c' --include='*.vala' | wc -l)"
-        echo "bkWNs_agent_main: $(grep -r 'bkWNs_agent_main' --include='*.c' --include='*.vala' | wc -l)"
+        echo "=== Source patches complete ==="
 
     - name: Build frida-server for Android arm64
       run: |
@@ -154,10 +147,7 @@ jobs:
         
         echo "=== Applying SAME patches to frida-python ==="
         
-        # 只替换关键符号和 RPC
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
-          sed -i 's/frida_agent_main/bkWNs_agent_main/g' {} \;
-        
+        # 只替换 RPC (不修改 frida_agent_main)
         find . -type f \( -name "*.vala" -o -name "*.js" -o -name "*.ts" \) -exec \
           sed -i 's/frida:rpc/AdWBfWIcq/g' {} \;
         
