@@ -1,0 +1,141 @@
+name: Build Frida Tools with Custom RPC (AdWBfWIcq)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-2022
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Python 3.11
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: |
+        pip install wheel setuptools meson ninja
+        
+    - name: Clone frida 16.7.19
+      run: |
+        git clone --branch 16.7.19 --recurse-submodules --depth 1 https://github.com/frida/frida.git
+        
+    - name: Patch frida:rpc to AdWBfWIcq
+      shell: python
+      run: |
+        import os
+        import glob
+        
+        # 固定的 RPC 字符串，和 v2 服务器一致
+        OLD_RPC = "frida:rpc"
+        NEW_RPC = "AdWBfWIcq"
+        
+        print(f"Patching {OLD_RPC} -> {NEW_RPC}")
+        
+        # 1. Patch rpc.vala
+        rpc_vala = "frida/subprojects/frida-core/lib/base/rpc.vala"
+        if os.path.exists(rpc_vala):
+            with open(rpc_vala, "r", encoding="utf-8") as f:
+                content = f.read()
+            old_count = content.count(f'"{OLD_RPC}"')
+            content = content.replace(f'"{OLD_RPC}"', f'"{NEW_RPC}"')
+            with open(rpc_vala, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"  Patched rpc.vala: {old_count} occurrences")
+        
+        # 2. Patch all JS/TS files in frida-core
+        patterns = [
+            "frida/subprojects/frida-core/**/*.js",
+            "frida/subprojects/frida-core/**/*.ts",
+            "frida/subprojects/frida-gum/**/*.js",
+            "frida/subprojects/frida-gum/**/*.ts",
+        ]
+        
+        for pattern in patterns:
+            for filepath in glob.glob(pattern, recursive=True):
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    if OLD_RPC in content:
+                        content = content.replace(OLD_RPC, NEW_RPC)
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        print(f"  Patched: {filepath}")
+                except Exception as e:
+                    pass
+        
+        print("Patching complete!")
+
+    - name: Setup MSVC
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+
+    - name: Build Frida for Windows
+      run: |
+        cd frida
+        python releng\devkit.py frida-core windows-x86_64 devkit-windows
+      continue-on-error: true
+      timeout-minutes: 60
+
+    - name: Clone frida-python
+      run: |
+        git clone --branch 16.7.19 --recurse-submodules --depth 1 https://github.com/frida/frida-python.git
+        
+    - name: Patch frida-python submodule
+      shell: python
+      run: |
+        import os
+        import glob
+        
+        OLD_RPC = "frida:rpc"
+        NEW_RPC = "AdWBfWIcq"
+        
+        # Patch frida-python's frida-core submodule
+        rpc_vala = "frida-python/subprojects/frida-core/lib/base/rpc.vala"
+        if os.path.exists(rpc_vala):
+            with open(rpc_vala, "r", encoding="utf-8") as f:
+                content = f.read()
+            content = content.replace(f'"{OLD_RPC}"', f'"{NEW_RPC}"')
+            with open(rpc_vala, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"Patched frida-python rpc.vala")
+        
+        # Patch JS files
+        for pattern in ["frida-python/subprojects/**/*.js", "frida-python/subprojects/**/*.ts"]:
+            for filepath in glob.glob(pattern, recursive=True):
+                try:
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        content = f.read()
+                    if OLD_RPC in content:
+                        content = content.replace(OLD_RPC, NEW_RPC)
+                        with open(filepath, "w", encoding="utf-8") as f:
+                            f.write(content)
+                        print(f"Patched: {filepath}")
+                except:
+                    pass
+
+    - name: Build frida-python wheel
+      run: |
+        cd frida-python
+        pip wheel . --no-deps -w dist/
+      continue-on-error: true
+      timeout-minutes: 60
+        
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: frida-tools-16.7.19-custom-win64
+        path: |
+          frida-python/dist/*.whl
+          frida/devkit-windows/
+      if: always()
