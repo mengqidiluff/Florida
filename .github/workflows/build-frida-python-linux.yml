@@ -1,0 +1,274 @@
+name: Build Frida Python 16.7.19 (Linux for Windows)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-python-wheel:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential ninja-build gcc-multilib g++-multilib \
+          lib32stdc++-11-dev flex bison xz-utils pkg-config \
+          mingw-w64 mingw-w64-tools
+        pip install meson ninja wheel setuptools
+
+    - name: Clone frida 16.7.19
+      run: |
+        git clone --branch 16.7.19 --recurse-submodules --depth 1 https://github.com/frida/frida.git
+
+    - name: Patch frida:rpc to AdWBfWIcq in source
+      run: |
+        # 固定的 RPC 字符串
+        OLD_RPC="frida:rpc"
+        NEW_RPC="AdWBfWIcq"
+        
+        echo "Patching $OLD_RPC -> $NEW_RPC"
+        
+        # 1. Patch rpc.vala in frida-core
+        RPC_VALA="frida/subprojects/frida-core/lib/base/rpc.vala"
+        if [ -f "$RPC_VALA" ]; then
+          sed -i "s/\"$OLD_RPC\"/\"$NEW_RPC\"/g" "$RPC_VALA"
+          echo "Patched $RPC_VALA"
+          grep -c "$NEW_RPC" "$RPC_VALA" || true
+        fi
+        
+        # 2. Patch all JS files
+        find frida/subprojects -name "*.js" -exec grep -l "$OLD_RPC" {} \; | while read f; do
+          sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
+          echo "Patched $f"
+        done
+        
+        # 3. Patch all TS files
+        find frida/subprojects -name "*.ts" -exec grep -l "$OLD_RPC" {} \; | while read f; do
+          sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
+          echo "Patched $f"
+        done
+
+    - name: Build Frida devkit for host
+      run: |
+        cd frida
+        make core-linux-x86_64
+      timeout-minutes: 60
+      continue-on-error: true
+
+    - name: Clone frida-python
+      run: |
+        git clone --branch 16.7.19 --recurse-submodules --depth 1 https://github.com/frida/frida-python.git
+
+    - name: Patch frida-python submodules
+      run: |
+        OLD_RPC="frida:rpc"
+        NEW_RPC="AdWBfWIcq"
+        
+        # Patch frida-core in frida-python
+        RPC_VALA="frida-python/subprojects/frida-core/lib/base/rpc.vala"
+        if [ -f "$RPC_VALA" ]; then
+          sed -i "s/\"$OLD_RPC\"/\"$NEW_RPC\"/g" "$RPC_VALA"
+          echo "Patched $RPC_VALA"
+        fi
+        
+        # Patch JS/TS files
+        find frida-python/subprojects -name "*.js" -o -name "*.ts" | xargs grep -l "$OLD_RPC" 2>/dev/null | while read f; do
+          sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
+          echo "Patched $f"
+        done
+
+    - name: Build frida-python wheel (Linux)
+      run: |
+        cd frida-python
+        pip wheel . --no-deps -w dist/
+      timeout-minutes: 60
+      continue-on-error: true
+
+    - name: List built files
+      run: |
+        ls -la frida-python/dist/ || true
+        ls -la frida/ || true
+
+    - name: Upload Linux wheel
+      uses: actions/upload-artifact@v4
+      with:
+        name: frida-python-16.7.19-linux
+        path: frida-python/dist/*.whl
+      if: always()
+
+  build-server-with-rpc-patch:
+    runs-on: ubuntu-22.04
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v3
+      with:
+        distribution: "temurin"
+        java-version: "17"
+        
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Setup Android NDK
+      id: setup-ndk
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: r25c
+        local-cache: false
+        link-to-sdk: true
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential tree ninja-build gcc-multilib g++-multilib \
+          lib32stdc++-11-dev flex bison ruby ruby-dev python3-requests python3-setuptools \
+          python3-dev python3-pip libc6-dev libc6-dev-i386
+        sudo gem install fpm -v 1.11.0 --no-document
+        pip install lief meson ninja
+
+    - name: Clone Frida 16.7.19
+      run: |
+        git clone --branch 16.7.19 --recurse-submodules --depth 1 https://github.com/frida/frida.git
+
+    - name: Patch frida:rpc in source code
+      run: |
+        OLD_RPC="frida:rpc"
+        NEW_RPC="AdWBfWIcq"
+        
+        echo "=== Patching source code ==="
+        
+        # Patch rpc.vala
+        RPC_VALA="frida/subprojects/frida-core/lib/base/rpc.vala"
+        sed -i "s/\"$OLD_RPC\"/\"$NEW_RPC\"/g" "$RPC_VALA"
+        echo "Patched rpc.vala: $(grep -c "$NEW_RPC" "$RPC_VALA") occurrences"
+        
+        # Patch all JS/TS files
+        find frida/subprojects -type f \( -name "*.js" -o -name "*.ts" \) | while read f; do
+          if grep -q "$OLD_RPC" "$f" 2>/dev/null; then
+            sed -i "s/$OLD_RPC/$NEW_RPC/g" "$f"
+            echo "Patched: $f"
+          fi
+        done
+
+    - name: Apply other Florida patches
+      run: |
+        cd frida/subprojects/frida-core
+        
+        # Patch socket names
+        sed -i 's|return "/frida-" + Uuid.string_random ();|var _b = new StringBuilder (); var _c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; for (var _i = 0; _i != 32; _i++) _b.append_c (_c[Random.int_range (0, _c.length)]); return "/" + _b.str;|g' src/linux/frida-helper-backend.vala || true
+        
+        # Patch process name
+        sed -i 's/g_set_prgname ("frida");/g_set_prgname ("ggbond");/g' ../frida-gum/gum/gum.c || true
+        
+        # Patch memfd name
+        sed -i 's/return Linux.syscall (SysCall.memfd_create, name, flags);/return Linux.syscall (SysCall.memfd_create, "jit-cache", flags);/g' lib/base/linux.vala || true
+
+    - name: Build frida-server for Android arm64
+      run: |
+        export ANDROID_NDK_ROOT=${{ steps.setup-ndk.outputs.ndk-path }}
+        
+        mkdir -p build-android-arm64
+        cd build-android-arm64
+        ../frida/configure --host=android-arm64
+        make
+      timeout-minutes: 60
+
+    - name: Post-process frida-server binary
+      run: |
+        SERVER="build-android-arm64/subprojects/frida-core/server/frida-server"
+        
+        if [ -f "$SERVER" ]; then
+          echo "=== Before post-processing ==="
+          echo "frida:rpc: $(grep -c 'frida:rpc' "$SERVER" || echo 0)"
+          echo "AdWBfWIcq: $(grep -c 'AdWBfWIcq' "$SERVER" || echo 0)"
+          
+          # Additional binary patches for thread names
+          python3 << 'EOF'
+import random
+import string
+import sys
+
+def random_string(length):
+    return ''.join(random.choices(string.ascii_letters, k=length))
+
+server_path = "build-android-arm64/subprojects/frida-core/server/frida-server"
+
+with open(server_path, 'rb') as f:
+    data = f.read()
+
+print(f"Size: {len(data)}")
+print(f"frida:rpc before: {data.count(b'frida:rpc')}")
+
+# Patch remaining frida:rpc
+data = data.replace(b'frida:rpc', b'AdWBfWIcq')
+
+# Patch thread names
+gmain_new = random_string(5).encode()
+gdbus_new = random_string(5).encode()
+data = data.replace(b'gmain', gmain_new)
+data = data.replace(b'gdbus', gdbus_new)
+
+# Patch gum-js-loop
+gum_new = random_string(11).encode()
+data = data.replace(b'gum-js-loop', gum_new)
+
+# Patch pool-spawner
+pool_new = random_string(12).encode()
+data = data.replace(b'pool-spawner', pool_new)
+
+# Patch frida-agent
+agent_new = random_string(11).encode()
+data = data.replace(b'frida-agent', agent_new)
+
+# Patch frida-server
+server_new = random_string(12).encode()
+data = data.replace(b'frida-server', server_new)
+
+# Patch /frida- paths
+path_new = '/' + random_string(6)
+data = data.replace(b'/frida-', path_new.encode())
+
+print(f"frida:rpc after: {data.count(b'frida:rpc')}")
+print(f"AdWBfWIcq after: {data.count(b'AdWBfWIcq')}")
+
+with open(server_path, 'wb') as f:
+    f.write(data)
+
+print("Post-processing complete!")
+EOF
+        fi
+
+    - name: Compress and upload
+      run: |
+        SERVER="build-android-arm64/subprojects/frida-core/server/frida-server"
+        gzip -k "$SERVER"
+        mv "${SERVER}.gz" frida-server-16.7.19-patched-android-arm64.gz
+
+    - name: Upload server artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: frida-server-16.7.19-patched
+        path: frida-server-16.7.19-patched-android-arm64.gz
