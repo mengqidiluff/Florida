@@ -66,7 +66,8 @@ jobs:
           sed -i 's/frida_agent_main/bkWNs_agent_main/g' {} \;
         
         echo "2. Patching frida-agent -> bkWNs-agent (11 chars)..."
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" -o -name "meson.build" -o -name "*.py" \) -exec \
+        # 只替换源码文件，不替换 meson.build (避免文件名引用问题)
+        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/frida-agent/bkWNs-agent/g' {} \;
         
         echo "3. Patching frida:rpc -> AdWBfWIcq (9 chars)..."
@@ -176,7 +177,7 @@ jobs:
         find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/frida_agent_main/bkWNs_agent_main/g' {} \;
         
-        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" -o -name "meson.build" -o -name "*.py" \) -exec \
+        find . -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) -exec \
           sed -i 's/frida-agent/bkWNs-agent/g' {} \;
         
         find . -type f \( -name "*.vala" -o -name "*.js" -o -name "*.ts" \) -exec \
