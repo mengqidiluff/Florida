@@ -52,7 +52,7 @@ jobs:
       run: |
         git clone --branch 16.7.19 --recurse-submodules --depth 1 https://github.com/frida/frida.git
 
-    - name: Apply all anti-detection patches
+    - name: Apply anti-detection patches (without breaking agent symbols)
       run: |
         echo "=== Applying anti-detection patches ==="
         
@@ -65,47 +65,39 @@ jobs:
           fi
         done
         
-        # 2. Patch frida_agent_main -> fxxxx_agent_main
-        echo "Patching agent function names..."
-        find frida -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" -o -name "*.cpp" \) 2>/dev/null | while read f; do
-          if grep -q "frida_agent" "$f" 2>/dev/null; then
-            sed -i 's/frida_agent_main/${{ env.NEW_AGENT }}_agent_main/g' "$f"
-            sed -i 's/frida_agent_container/${{ env.NEW_AGENT }}_agent_container/g' "$f"
-            sed -i 's/frida_agent_message/${{ env.NEW_AGENT }}_agent_message/g' "$f"
-            sed -i 's/frida_agent_runner/${{ env.NEW_AGENT }}_agent_runner/g' "$f"
-            echo "  Agent: $f"
-          fi
-        done
+        # 2. DO NOT patch frida_agent_main - it breaks linking!
+        # Instead we will patch the binary after compilation
         
-        # 3. Patch FridaScriptEngine -> XxxxxScriptEngine
-        echo "Patching class names..."
-        find frida -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" -o -name "*.cpp" \) 2>/dev/null | while read f; do
-          if grep -q "FridaScript" "$f" 2>/dev/null; then
-            sed -i 's/FridaScriptEngine/XxxxxScriptEngine/g' "$f"
-            echo "  Script: $f"
-          fi
-        done
-        
-        # 4. Patch re.frida.server
+        # 3. Patch re.frida.server and re.frida.Helper (package identifiers)
         echo "Patching package identifiers..."
         find frida -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" \) 2>/dev/null | while read f; do
           if grep -q "re.frida.server" "$f" 2>/dev/null; then
             sed -i 's/re\.frida\.server/xx.xxxxx.xxxxxx/g' "$f"
-            echo "  Package: $f"
+            echo "  Package server: $f"
+          fi
+          if grep -q "re.frida.Helper" "$f" 2>/dev/null; then
+            sed -i 's/re\.frida\.Helper/xx.xxxxx.Xxxxxx/g' "$f"
+            echo "  Package helper: $f"
           fi
         done
         
-        # 5. Patch socket names (Florida style)
+        # 4. Patch socket names (Florida style)
         cd frida/subprojects/frida-core
         sed -i 's|return "/frida-" + Uuid.string_random ();|var _b = new StringBuilder (); var _c = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"; for (var _i = 0; _i != 32; _i++) _b.append_c (_c[Random.int_range (0, _c.length)]); return "/" + _b.str;|g' src/linux/frida-helper-backend.vala || true
         
-        # 6. Patch process name
+        # 5. Patch process name
         sed -i 's/g_set_prgname ("frida");/g_set_prgname ("ggbond");/g' ../frida-gum/gum/gum.c || true
         
-        # 7. Patch memfd name
+        # 6. Patch memfd name
         sed -i 's/return Linux.syscall (SysCall.memfd_create, name, flags);/return Linux.syscall (SysCall.memfd_create, "jit-cache", flags);/g' lib/base/linux.vala || true
         
-        echo "=== Patching complete ==="
+        # 7. Patch thread names
+        find ../frida-gum -type f -name "*.c" | xargs sed -i 's/"gmain"/"xmain"/g' 2>/dev/null || true
+        find ../frida-gum -type f -name "*.c" | xargs sed -i 's/"gdbus"/"xdbus"/g' 2>/dev/null || true
+        find . -type f -name "*.vala" | xargs sed -i 's/"gum-js-loop"/"xxx-xx-loop"/g' 2>/dev/null || true
+        find . -type f -name "*.vala" | xargs sed -i 's/"pool-spawner"/"pool-xxxxxxx"/g' 2>/dev/null || true
+        
+        echo "=== Source patching complete ==="
 
     - name: Build frida-server for Android arm64
       run: |
@@ -117,14 +109,17 @@ jobs:
         make
       timeout-minutes: 60
 
-    - name: Verify patches in binary
+    - name: Post-process binary (patch remaining strings)
       run: |
         SERVER="build-android-arm64/subprojects/frida-core/server/frida-server"
-        echo "=== Verifying binary patches ==="
-        echo "frida:rpc count: $(strings "$SERVER" | grep -c 'frida:rpc' || echo 0)"
-        echo "AdWBfWIcq count: $(strings "$SERVER" | grep -c '${{ env.NEW_RPC }}' || echo 0)"
-        echo "frida_agent_main count: $(strings "$SERVER" | grep -c 'frida_agent_main' || echo 0)"
-        echo "${{ env.NEW_AGENT }}_agent_main count: $(strings "$SERVER" | grep -c '${{ env.NEW_AGENT }}_agent_main' || echo 0)"
+        
+        echo "=== Before binary patching ==="
+        strings "$SERVER" | grep -c 'frida_agent_main' || echo "frida_agent_main: 0"
+        
+        python3 ${{ github.workspace }}/patch_server.py "$SERVER"
+        
+        echo "=== After binary patching ==="
+        strings "$SERVER" | grep -c 'fxxxx_agent_main' || echo "fxxxx_agent_main: 0"
 
     - name: Upload server
       uses: actions/upload-artifact@v4
@@ -157,35 +152,16 @@ jobs:
       run: |
         git clone --branch 16.7.19 --recurse-submodules --depth 1 https://github.com/frida/frida-python.git
 
-    - name: Apply anti-detection patches
+    - name: Apply anti-detection patches to frida-python source
       shell: bash
       run: |
         echo "=== Applying patches to frida-python ==="
         
-        # Patch RPC
+        # Patch RPC only (don't touch agent names in source - will patch binary later)
         find frida-python -type f \( -name "*.vala" -o -name "*.js" -o -name "*.ts" \) 2>/dev/null | while read f; do
           if grep -q "frida:rpc" "$f" 2>/dev/null; then
             sed -i 's/frida:rpc/${{ env.NEW_RPC }}/g' "$f"
             echo "  RPC: $f"
-          fi
-        done
-        
-        # Patch agent names
-        find frida-python -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" -o -name "*.cpp" \) 2>/dev/null | while read f; do
-          if grep -q "frida_agent" "$f" 2>/dev/null; then
-            sed -i 's/frida_agent_main/${{ env.NEW_AGENT }}_agent_main/g' "$f"
-            sed -i 's/frida_agent_container/${{ env.NEW_AGENT }}_agent_container/g' "$f"
-            sed -i 's/frida_agent_message/${{ env.NEW_AGENT }}_agent_message/g' "$f"
-            sed -i 's/frida_agent_runner/${{ env.NEW_AGENT }}_agent_runner/g' "$f"
-            echo "  Agent: $f"
-          fi
-        done
-        
-        # Patch class names
-        find frida-python -type f \( -name "*.c" -o -name "*.h" -o -name "*.vala" -o -name "*.cpp" \) 2>/dev/null | while read f; do
-          if grep -q "FridaScript" "$f" 2>/dev/null; then
-            sed -i 's/FridaScriptEngine/XxxxxScriptEngine/g' "$f"
-            echo "  Script: $f"
           fi
         done
         
@@ -197,7 +173,7 @@ jobs:
           fi
         done
         
-        echo "=== Patches applied ==="
+        echo "=== Source patches applied ==="
 
     - name: Build frida-python wheel
       run: |
@@ -210,6 +186,21 @@ jobs:
       run: |
         Get-ChildItem frida-python/dist/ -ErrorAction SilentlyContinue
       shell: powershell
+
+    - name: Post-process wheel (binary patch)
+      shell: bash
+      run: |
+        echo "=== Post-processing wheel ==="
+        
+        WHEEL=$(ls frida-python/dist/*.whl 2>/dev/null | head -1)
+        if [ -z "$WHEEL" ]; then
+          echo "No wheel found, skipping"
+          exit 0
+        fi
+        
+        echo "Processing: $WHEEL"
+        python3 ${{ github.workspace }}/patch_wheel.py "$WHEEL"
+      continue-on-error: true
 
     - name: Upload Windows wheel
       uses: actions/upload-artifact@v4
